@@ -1,14 +1,24 @@
-
 import "dotenv/config";
 import express from "express";
 import { MongoClient, ServerApiVersion } from "mongodb";
+import { toNodeHandler } from "better-auth/node";
+import { auth } from "./config/auth.js";
+import cors from "cors";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 const uri = process.env.MONGODB_URI;
 const DB_NAME = process.env.DB_NAME || "shopsphere";
 
+app.use(cors({
+    origin: process.env.CLIENT_URL,
+    credentials: true,
+}));
+
 app.use(express.json());
+
+// [FIX]: এক্সপ্রেসের নতুন ভার্সন ও path-to-regexp এরর এড়াতে এখানে *splat ব্যবহার করা হয়েছে
+app.all("/api/auth/*splat", toNodeHandler(auth));
 
 if (!uri) {
     throw new Error("MONGODB_URI is missing from your .env file");
