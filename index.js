@@ -17,7 +17,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// [FIX]: এক্সপ্রেসের নতুন ভার্সন ও path-to-regexp এরর এড়াতে এখানে *splat ব্যবহার করা হয়েছে
+
 app.all("/api/auth/*splat", toNodeHandler(auth));
 
 if (!uri) {
