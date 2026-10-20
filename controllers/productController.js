@@ -21,12 +21,18 @@ export const getProducts = async (req, res, productsCollection) => {
 // POST /api/products
 export const addProduct = async (req, res, productsCollection) => {
     try {
-        const { title, price, category = "", image = "", description = "" } =
-            req.body;
+        const {
+            title,
+            price,
+            category = "",
+            image = "",
+            description = "",
+        } = req.body;
 
         if (
             typeof title !== "string" ||
             !title.trim() ||
+            title.trim().length > 200 ||
             price === "" ||
             price === undefined ||
             !Number.isFinite(Number(price)) ||
@@ -62,13 +68,20 @@ export const addProduct = async (req, res, productsCollection) => {
         });
     }
 };
-// Details api
-export const getProductById = async (req, res, productsCollection) => {
+
+// GET /api/products/:id
+export const getProductById = async (
+    req,
+    res,
+    productsCollection
+) => {
     try {
         const { id } = req.params;
 
         if (!ObjectId.isValid(id)) {
-            return res.status(400).json({ message: "Invalid product ID" });
+            return res.status(400).json({
+                message: "Invalid product ID",
+            });
         }
 
         const product = await productsCollection.findOne({
@@ -76,7 +89,9 @@ export const getProductById = async (req, res, productsCollection) => {
         });
 
         if (!product) {
-            return res.status(404).json({ message: "Product not found" });
+            return res.status(404).json({
+                message: "Product not found",
+            });
         }
 
         return res.status(200).json(product);
@@ -87,7 +102,6 @@ export const getProductById = async (req, res, productsCollection) => {
         });
     }
 };
-
 
 // PATCH /api/products/:id
 export const updateProductPrice = async (
@@ -100,7 +114,9 @@ export const updateProductPrice = async (
         const { price } = req.body;
 
         if (!ObjectId.isValid(id)) {
-            return res.status(400).json({ message: "Invalid product ID" });
+            return res.status(400).json({
+                message: "Invalid product ID",
+            });
         }
 
         if (
@@ -109,7 +125,9 @@ export const updateProductPrice = async (
             !Number.isFinite(Number(price)) ||
             Number(price) < 0
         ) {
-            return res.status(400).json({ message: "Invalid price" });
+            return res.status(400).json({
+                message: "Invalid price",
+            });
         }
 
         const result = await productsCollection.updateOne(
@@ -118,9 +136,10 @@ export const updateProductPrice = async (
         );
 
         if (result.matchedCount === 0) {
-            return res.status(404).json({ message: "Product not found" });
+            return res.status(404).json({
+                message: "Product not found",
+            });
         }
-        
 
         return res.status(200).json({
             message: "Price updated successfully",
@@ -134,12 +153,18 @@ export const updateProductPrice = async (
 };
 
 // DELETE /api/products/:id
-export const deleteProduct = async (req, res, productsCollection) => {
+export const deleteProduct = async (
+    req,
+    res,
+    productsCollection
+) => {
     try {
         const { id } = req.params;
 
         if (!ObjectId.isValid(id)) {
-            return res.status(400).json({ message: "Invalid product ID" });
+            return res.status(400).json({
+                message: "Invalid product ID",
+            });
         }
 
         const result = await productsCollection.deleteOne({
@@ -147,7 +172,9 @@ export const deleteProduct = async (req, res, productsCollection) => {
         });
 
         if (result.deletedCount === 0) {
-            return res.status(404).json({ message: "Product not found" });
+            return res.status(404).json({
+                message: "Product not found",
+            });
         }
 
         return res.status(200).json({

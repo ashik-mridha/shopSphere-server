@@ -1,5 +1,6 @@
 
 import express from "express";
+
 import {
     getProducts,
     addProduct,
@@ -19,15 +20,16 @@ const productRoutes = (productsCollection) => {
         addProduct(req, res, productsCollection)
     );
 
+    router.get("/:id", (req, res) =>
+        getProductById(req, res, productsCollection)
+    );
+
     router.patch("/:id", (req, res) =>
         updateProductPrice(req, res, productsCollection)
     );
 
     router.delete("/:id", (req, res) =>
         deleteProduct(req, res, productsCollection)
-    );
-    router.get("/:id", (req, res) =>
-        getProductById(req, res, productsCollection)
     );
 
     return router;

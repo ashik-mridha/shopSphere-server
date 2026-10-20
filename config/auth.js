@@ -1,7 +1,8 @@
+
+import "dotenv/config";
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "@better-auth/mongo-adapter";
-import { jwt } from "better-auth/plugins";
-import { admin } from "better-auth/plugins";
+import { jwt, admin } from "better-auth/plugins";
 import { MongoClient } from "mongodb";
 
 const client = new MongoClient(process.env.MONGODB_URI);
@@ -18,7 +19,7 @@ export const auth = betterAuth({
     secret: process.env.BETTER_AUTH_SECRET,
 
     trustedOrigins: [
-        process.env.CLIENT_URL,
+        process.env.CLIENT_URL || "http://localhost:5173",
     ],
 
     emailAndPassword: {
