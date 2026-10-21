@@ -1,4 +1,3 @@
-
 import express from "express";
 import { createOrderController } from "../controllers/orderController.js";
 
@@ -11,6 +10,8 @@ const orderRoutes = ({
     const {
         createOrder,
         getOrders,
+        getOrderById,
+        updateOrderStatus, 
     } = createOrderController({
         productsCollection,
         ordersCollection,
@@ -18,6 +19,10 @@ const orderRoutes = ({
 
     router.post("/", createOrder);
     router.get("/", getOrders);
+
+    router.get("/:id", getOrderById);
+
+    router.patch("/:id", updateOrderStatus);
 
     return router;
 };

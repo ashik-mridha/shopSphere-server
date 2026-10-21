@@ -1,4 +1,3 @@
-
 import { ObjectId } from "mongodb";
 
 export function createOrderController({
@@ -87,6 +86,7 @@ export function createOrderController({
             const order = {
                 productId: product._id,
                 productTitle: product.title,
+                productImage: product.image,
                 unitPrice,
                 quantity,
                 total,
@@ -139,8 +139,100 @@ export function createOrderController({
         }
     }
 
+    async function getOrderById(req, res) {
+        try {
+            const { id } = req.params;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid order ID format",
+                });
+            }
+
+            const order = await ordersCollection.findOne({
+                _id: new ObjectId(id),
+            });
+
+            if (!order) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Order not found",
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                order,
+            });
+        } catch (error) {
+            console.error("Fetch single order error:", error);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to load order tracking info",
+            });
+        }
+    }
+
+    // এডমিন প্যানেল থেকে অর্ডার স্ট্যাটাস আপডেট করার ফাংশন
+    async function updateOrderStatus(req, res) {
+        try {
+            const { id } = req.params;
+            const { status } = req.body;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid order ID format",
+                });
+            }
+
+            const validStatuses = [
+                "Pending",
+                "Processing",
+                "Shipped",
+                "Delivered",
+                "Cancelled",
+            ];
+
+            if (!status || !validStatuses.includes(status)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid status value",
+                });
+            }
+
+            const result = await ordersCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { status, updatedAt: new Date() } }
+            );
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Order not found",
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Order status updated successfully",
+            });
+        } catch (error) {
+            console.error("Update order status error:", error);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to update order status",
+            });
+        }
+    }
+
     return {
         createOrder,
         getOrders,
+        getOrderById,
+        updateOrderStatus, // রাউটার ব্যবহারের জন্য এক্সপোর্ট করা হলো
     };
 }
