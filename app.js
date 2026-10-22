@@ -5,9 +5,9 @@ import cors from "cors";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "./config/auth.js";
 
-import productRoutes from "./routes/productRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import adminUserRoutes from "./routes/adminUserRoutes.js";
+import productRoutes from "./routes/productRoutes.js";
 
 const CLIENT_URL =
     process.env.CLIENT_URL || "http://localhost:5173";
@@ -71,10 +71,7 @@ export function initializeRoutes(db) {
     const productsCollection = db.collection("products");
     const ordersCollection = db.collection("orders");
 
-    app.use(
-        "/api/products",
-        productRoutes(productsCollection)
-    );
+    app.use("/api/products", productRoutes(productsCollection));
 
     app.use(
         "/api/orders",
