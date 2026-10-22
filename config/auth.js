@@ -35,18 +35,17 @@ export const mongoClient = client;
 const db = client.db(DB_NAME);
 
 export const auth = betterAuth({
-    appName: "ShopSphere",
-
-    baseURL: BETTER_AUTH_URL,
-
-    secret: BETTER_AUTH_SECRET,
-
     database: mongodbAdapter(db, {
         client,
     }),
 
+    baseURL: "https://shop-sphere-server-three.vercel.app",
+
+    secret: process.env.BETTER_AUTH_SECRET,
+
     trustedOrigins: [
-        CLIENT_URL,
+        "https://shop-sphere-green-five.vercel.app",
+        "http://localhost:5173",
     ],
 
     emailAndPassword: {
@@ -56,8 +55,8 @@ export const auth = betterAuth({
 
     socialProviders: {
         google: {
-            clientId: process.env.GOOGLE_CLIENT_ID || "",
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
         },
     },
 
