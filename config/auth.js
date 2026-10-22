@@ -1,4 +1,3 @@
-
 import "dotenv/config";
 
 import { betterAuth } from "better-auth";
@@ -10,11 +9,13 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.DB_NAME || "shopsphere";
 
 const BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET;
+
+// dynamic URL resolution (Vercel Production & Local Development)
 const BETTER_AUTH_URL =
-    process.env.BETTER_AUTH_URL || "http://localhost:5000";
+    process.env.BETTER_AUTH_URL || "https://shop-sphere-server-three.vercel.app";
 
 const CLIENT_URL =
-    process.env.CLIENT_URL || "http://localhost:5173";
+    process.env.CLIENT_URL || "https://shop-sphere-green-five.vercel.app";
 
 if (!MONGODB_URI) {
     throw new Error("MONGODB_URI is missing from environment variables");
@@ -39,13 +40,17 @@ export const auth = betterAuth({
         client,
     }),
 
-    baseURL: "https://shop-sphere-server-three.vercel.app",
+    // Base URL dynamically from environment variable
+    baseURL: BETTER_AUTH_URL,
 
-    secret: process.env.BETTER_AUTH_SECRET,
+    secret: BETTER_AUTH_SECRET,
 
+    // Trusted frontend Origins and Client URLs
     trustedOrigins: [
+        CLIENT_URL,
         "https://shop-sphere-green-five.vercel.app",
         "http://localhost:5173",
+        "http://localhost:3000"
     ],
 
     emailAndPassword: {
@@ -57,6 +62,19 @@ export const auth = betterAuth({
         google: {
             clientId: process.env.GOOGLE_CLIENT_ID,
             clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            // Google auth success/fail redirect handling
+            redirectURI: `${BETTER_AUTH_URL}/api/auth/callback/google`,
+        },
+    },
+
+    // Session and Cross-Domain Cookie settings for Vercel
+    advanced: {
+        crossSubDomainCookies: {
+            enabled: true,
+        },
+        defaultCookieAttributes: {
+            sameSite: "none",
+            secure: true,
         },
     },
 
