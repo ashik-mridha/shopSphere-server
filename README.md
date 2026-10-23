@@ -80,3 +80,35 @@ Order lifecycle: `status` = `pending_payment → processing → shipped → deli
 - Admin routes use `requireAdmin`; customers only ever see their own orders/addresses/wishlist.
 - Blocking a user deletes their sessions immediately.
 - No transactional email is sent by this project.
+
+## Authentication
+
+- Email + password and Google via Better Auth (`/api/auth/*`). Roles: `user` (default) and `admin`.
+- **Roles can never be set from the browser**: sign-up with a `role` field is rejected (`FIELD_NOT_ALLOWED`) and only an admin can change roles (`PATCH /api/admin/users/:id`).
+- Create the first admin: register normally, then on a machine with database access run
+
+  ```bash
+  npm run make-admin -- you@example.com           # promote
+  npm run make-admin -- you@example.com --revoke  # demote
+  ```
+
+  The user must sign out and in again.
+- Blocked users are rejected at sign-in and their sessions are deleted.
+
+### Production setup (recommended: one site, no third-party cookies)
+
+Let the frontend host proxy `/api/*` to this server, so the browser only ever talks to the frontend origin and the session cookie is first-party.
+
+| Where | Setting |
+|---|---|
+| Frontend (Vercel) `vercel.json` | rewrite `/api/:path*` -> `https://<your-api-host>/api/:path*` (already in the repo; edit the host) |
+| Frontend env | `VITE_API_URL` **empty / unset** |
+| API env | `NODE_ENV=production`, `CLIENT_URL=https://<frontend-host>`, `BETTER_AUTH_URL=https://<frontend-host>` (same as CLIENT_URL), `BETTER_AUTH_SECRET`, `MONGODB_URI`, `DB_NAME` |
+| Google Cloud Console, Authorized JavaScript origin | `https://<frontend-host>` |
+| Google Cloud Console, Authorized redirect URI | `https://<frontend-host>/api/auth/callback/google` (exactly) |
+
+Origins must match exactly: `https`, no trailing slash, same `www` / non-`www`.
+
+Local development: `BETTER_AUTH_URL=http://localhost:5000`, `CLIENT_URL=http://localhost:5173`, Google redirect URI `http://localhost:5000/api/auth/callback/google`.
+
+If you must keep the API on a different site, set `BETTER_AUTH_URL` to the API URL and set `VITE_API_URL` to it; cookies become `SameSite=None; Secure`, but browsers that block third-party cookies (Safari, private windows) will lose the session.

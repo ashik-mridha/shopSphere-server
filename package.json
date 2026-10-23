@@ -6,7 +6,8 @@
     "dev": "nodemon index.js",
     "start": "node index.js",
     "seed": "node scripts/seed.js",
-    "build": "echo \"No build step for the API\""
+    "build": "echo \"No build step for the API\"",
+    "make-admin": "node scripts/make-admin.js"
   },
   "keywords": [],
   "author": "",
