@@ -1,238 +1,106 @@
-import { ObjectId } from "mongodb";
+import { z } from "zod";
+import { HttpError, col, escapeRegex, isObjectId, pageMeta, parsePagination, toObjectId } from "../lib/http.js";
+import { ORDER_STATUSES, PAYMENT_STATUSES } from "../lib/orders.js";
+import { getStripe, isStripeConfigured } from "../lib/stripe.js";
 
-export function createOrderController({
-    productsCollection,
-    ordersCollection,
-}) {
-    async function createOrder(req, res) {
+export const orderStatusSchema = z.object({
+    status: z.enum(["processing", "shipped", "delivered", "cancelled"]),
+    note: z.string().trim().max(200).optional(),
+});
+
+function orderLookup(idOrNumber) {
+    return isObjectId(idOrNumber) ? { _id: toObjectId(idOrNumber) } : { orderNumber: String(idOrNumber).toUpperCase() };
+}
+
+function listFilter(query, base = {}) {
+    const filter = { legacy: { $ne: true }, ...base };
+    if (ORDER_STATUSES.includes(query.status)) filter.status = query.status;
+    if (PAYMENT_STATUSES.includes(query.paymentStatus)) filter.paymentStatus = query.paymentStatus;
+    if (typeof query.q === "string" && query.q.trim()) {
+        const rx = new RegExp(escapeRegex(query.q.trim().slice(0, 100)), "i");
+        filter.$or = [{ orderNumber: rx }, { "customer.name": rx }, { "customer.email": rx }, { "items.title": rx }];
+    }
+    return filter;
+}
+
+const ORDER_SORTS = {
+    newest: { createdAt: -1 },
+    oldest: { createdAt: 1 },
+    "total-desc": { total: -1 },
+    "total-asc": { total: 1 },
+};
+
+async function paged(req, res, filter) {
+    const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
+    const orders = col(req, "orders");
+    const [items, total] = await Promise.all([
+        orders.find(filter).sort(ORDER_SORTS[req.query.sort] || ORDER_SORTS.newest).skip(skip).limit(limit).toArray(),
+        orders.countDocuments(filter),
+    ]);
+    res.json({ success: true, data: items, pagination: pageMeta(total, page, limit) });
+}
+
+export const getMyOrders = (req, res) => paged(req, res, listFilter(req.query, { userId: req.user.id }));
+export const getAdminOrders = (req, res) => paged(req, res, listFilter(req.query));
+
+export async function getOrder(req, res) {
+    const order = await col(req, "orders").findOne(orderLookup(req.params.id));
+    // 404 (not 403) for other people's orders so ids cannot be probed
+    if (!order || (order.userId !== req.user.id && req.user.role !== "admin")) {
+        throw new HttpError(404, "Order not found");
+    }
+    res.json({ success: true, data: order });
+}
+
+export async function cancelMyOrder(req, res) {
+    const orders = col(req, "orders");
+    const existing = await orders.findOne({ ...orderLookup(req.params.id), userId: req.user.id });
+    if (!existing) throw new HttpError(404, "Order not found");
+    if (existing.status !== "pending_payment" || existing.paymentStatus !== "pending") {
+        throw new HttpError(409, "Only unpaid orders can be cancelled here. Contact support for paid orders.");
+    }
+
+    if (existing.stripeSessionId && isStripeConfigured()) {
         try {
-            const { productId, quantity, customer } = req.body;
-
-            if (
-                typeof productId !== "string" ||
-                !/^[a-fA-F0-9]{24}$/.test(productId)
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid product ID",
-                });
-            }
-
-            if (
-                !Number.isInteger(quantity) ||
-                quantity < 1 ||
-                quantity > 99
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Quantity must be between 1 and 99",
-                });
-            }
-
-            const name =
-                typeof customer?.name === "string"
-                    ? customer.name.trim()
-                    : "";
-
-            const phone =
-                typeof customer?.phone === "string"
-                    ? customer.phone.trim()
-                    : "";
-
-            const address =
-                typeof customer?.address === "string"
-                    ? customer.address.trim()
-                    : "";
-
-            if (
-                name.length < 2 ||
-                name.length > 100 ||
-                phone.length < 7 ||
-                phone.length > 20 ||
-                address.length < 5 ||
-                address.length > 500
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Please provide valid customer details",
-                });
-            }
-
-            const product = await productsCollection.findOne({
-                _id: new ObjectId(productId),
-            });
-
-            if (!product) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Product not found",
-                });
-            }
-
-            const unitPrice = Number(product.price);
-
-            if (
-                !Number.isFinite(unitPrice) ||
-                unitPrice < 0
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Product price is invalid",
-                });
-            }
-
-            const total = unitPrice * quantity;
-
-            const order = {
-                productId: product._id,
-                productTitle: product.title,
-                productImage: product.image,
-                unitPrice,
-                quantity,
-                total,
-                customer: {
-                    name,
-                    phone,
-                    address,
-                },
-                paymentMethod: "Cash on Delivery",
-                status: "Pending",
-                createdAt: new Date(),
-            };
-
-            const result = await ordersCollection.insertOne(order);
-
-            return res.status(201).json({
-                success: true,
-                message: "Order placed successfully",
-                orderId: result.insertedId,
-                order: {
-                    ...order,
-                    _id: result.insertedId,
-                },
-            });
-        } catch (error) {
-            console.error("Create order error:", error);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to place order",
-            });
+            await getStripe().checkout.sessions.expire(existing.stripeSessionId);
+        } catch {
+            // session may already be expired/completed; the webhook is the source of truth
         }
     }
 
-    async function getOrders(req, res) {
-        try {
-            const orders = await ordersCollection
-                .find({})
-                .sort({ createdAt: -1 })
-                .toArray();
+    const updated = await orders.findOneAndUpdate(
+        { _id: existing._id, paymentStatus: "pending" },
+        {
+            $set: { status: "cancelled", paymentStatus: "expired", updatedAt: new Date() },
+            $push: { timeline: { status: "cancelled", note: "Cancelled by customer", at: new Date() } },
+        },
+        { returnDocument: "after" }
+    );
+    if (!updated) throw new HttpError(409, "This order was just paid and can no longer be cancelled.");
+    res.json({ success: true, message: "Order cancelled", data: updated });
+}
 
-            return res.status(200).json(orders);
-        } catch (error) {
-            console.error("Fetch orders error:", error);
+export async function updateOrderStatus(req, res) {
+    const orders = col(req, "orders");
+    const { status, note } = req.valid.body;
+    const order = await orders.findOne(orderLookup(req.params.id));
+    if (!order) throw new HttpError(404, "Order not found");
 
-            return res.status(500).json({
-                success: false,
-                message: "Failed to fetch orders",
-            });
-        }
+    if (order.paymentStatus !== "paid") {
+        throw new HttpError(409, "Only paid orders can be moved forward. Wait for the payment to complete.");
     }
-
-    async function getOrderById(req, res) {
-        try {
-            const { id } = req.params;
-
-            if (!ObjectId.isValid(id)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid order ID format",
-                });
-            }
-
-            const order = await ordersCollection.findOne({
-                _id: new ObjectId(id),
-            });
-
-            if (!order) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Order not found",
-                });
-            }
-
-            return res.status(200).json({
-                success: true,
-                order,
-            });
-        } catch (error) {
-            console.error("Fetch single order error:", error);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to load order tracking info",
-            });
-        }
+    if (status === "cancelled") {
+        throw new HttpError(409, "Paid orders are cancelled by issuing a refund (it restocks the items).");
     }
+    if (order.status === "cancelled") throw new HttpError(409, "This order is already cancelled.");
 
-    // এডমিন প্যানেল থেকে অর্ডার স্ট্যাটাস আপডেট করার ফাংশন
-    async function updateOrderStatus(req, res) {
-        try {
-            const { id } = req.params;
-            const { status } = req.body;
-
-            if (!ObjectId.isValid(id)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid order ID format",
-                });
-            }
-
-            const validStatuses = [
-                "Pending",
-                "Processing",
-                "Shipped",
-                "Delivered",
-                "Cancelled",
-            ];
-
-            if (!status || !validStatuses.includes(status)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid status value",
-                });
-            }
-
-            const result = await ordersCollection.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: { status, updatedAt: new Date() } }
-            );
-
-            if (result.matchedCount === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Order not found",
-                });
-            }
-
-            return res.status(200).json({
-                success: true,
-                message: "Order status updated successfully",
-            });
-        } catch (error) {
-            console.error("Update order status error:", error);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to update order status",
-            });
-        }
-    }
-
-    return {
-        createOrder,
-        getOrders,
-        getOrderById,
-        updateOrderStatus, // রাউটার ব্যবহারের জন্য এক্সপোর্ট করা হলো
-    };
+    const updated = await orders.findOneAndUpdate(
+        { _id: order._id },
+        {
+            $set: { status, updatedAt: new Date(), ...(status === "delivered" && { deliveredAt: new Date() }) },
+            $push: { timeline: { status, note: note || `Order marked as ${status}`, at: new Date() } },
+        },
+        { returnDocument: "after" }
+    );
+    res.json({ success: true, message: "Order status updated", data: updated });
 }

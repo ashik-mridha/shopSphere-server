@@ -1,112 +1,96 @@
+import { z } from "zod";
+import { HttpError, col, escapeRegex, pageMeta, parsePagination, toObjectId } from "../lib/http.js";
 
-export function createAdminUserController({ db, auth }) {
-    async function requireAdmin(req, res, next) {
-        try {
-            const session = await auth.api.getSession({
-                headers: req.headers,
-            });
+export const userUpdateSchema = z
+    .object({
+        role: z.enum(["user", "admin"]).optional(),
+        banned: z.boolean().optional(),
+        banReason: z.string().trim().max(200).optional(),
+    })
+    .refine((v) => v.role !== undefined || v.banned !== undefined, { message: "Nothing to update" });
 
-            if (!session?.user) {
-                return res.status(401).json({
-                    message: "Please log in first.",
-                });
-            }
+const SORTS = {
+    newest: { createdAt: -1 },
+    oldest: { createdAt: 1 },
+    name: { name: 1 },
+};
 
-            if (session.user.role !== "admin") {
-                return res.status(403).json({
-                    message: "Admin access required.",
-                });
-            }
+export async function getUsers(req, res) {
+    const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
+    const filter = {};
 
-            req.currentUser = session.user;
-            return next();
-        } catch (error) {
-            console.error("Admin authentication error:", error);
+    if (["admin", "user"].includes(req.query.role)) {
+        filter.role = req.query.role === "user" ? { $ne: "admin" } : "admin";
+    }
+    if (req.query.status === "blocked") filter.banned = true;
+    if (req.query.status === "active") filter.banned = { $ne: true };
 
-            return res.status(401).json({
-                message: "Unable to verify your session.",
-            });
-        }
+    if (typeof req.query.q === "string" && req.query.q.trim()) {
+        const rx = new RegExp(escapeRegex(req.query.q.trim().slice(0, 100)), "i");
+        filter.$or = [{ name: rx }, { email: rx }];
     }
 
-    async function getUsers(req, res) {
-        try {
-            const search =
-                typeof req.query.search === "string"
-                    ? req.query.search.trim().slice(0, 100)
-                    : "";
+    const users = col(req, "user");
+    const [items, total] = await Promise.all([
+        users
+            .find(filter)
+            .project({ name: 1, email: 1, role: 1, image: 1, banned: 1, banReason: 1, emailVerified: 1, createdAt: 1 })
+            .sort(SORTS[req.query.sort] || SORTS.newest)
+            .skip(skip)
+            .limit(limit)
+            .toArray(),
+        users.countDocuments(filter),
+    ]);
 
-            const role = String(
-                req.query.role || "all"
-            ).toLowerCase();
+    const ids = items.map((u) => String(u._id));
+    const orderStats = await col(req, "orders")
+        .aggregate([
+            { $match: { userId: { $in: ids }, paymentStatus: "paid" } },
+            { $group: { _id: "$userId", orders: { $sum: 1 }, spent: { $sum: "$total" } } },
+        ])
+        .toArray();
+    const statsById = new Map(orderStats.map((s) => [s._id, s]));
 
-            if (!["all", "admin", "user"].includes(role)) {
-                return res.status(400).json({
-                    message: "Invalid role filter.",
-                });
-            }
-
-            const usersCollection = db.collection("user");
-            const filter = {};
-
-            if (role !== "all") {
-                filter.role = role;
-            }
-
-            if (search) {
-                const escapedSearch = search.replace(
-                    /[.*+?^${}()|[\]\\]/g,
-                    "\\$&"
-                );
-
-                filter.$or = [
-                    {
-                        name: {
-                            $regex: escapedSearch,
-                            $options: "i",
-                        },
-                    },
-                    {
-                        email: {
-                            $regex: escapedSearch,
-                            $options: "i",
-                        },
-                    },
-                ];
-            }
-
-            const users = await usersCollection
-                .find(filter)
-                .project({
-                    name: 1,
-                    email: 1,
-                    role: 1,
-                    image: 1,
-                    emailVerified: 1,
-                    createdAt: 1,
-                })
-                .sort({ createdAt: -1 })
-                .limit(500)
-                .toArray();
-
-            return res.status(200).json({
-                success: true,
-                users: users.map((user) => ({
-                    ...user,
-                    _id: user._id.toString(),
-                })),
-            });
-        } catch (error) {
-            console.error("Fetch users error:", error);
-
-            return res.status(500).json({
-                message: "Failed to load users.",
-            });
-        }
-    }
-
-    return {
-        requireAdmin,
-        getUsers,
-    };
+    res.json({
+        success: true,
+        data: items.map((u) => ({
+            ...u,
+            _id: String(u._id),
+            role: u.role || "user",
+            banned: Boolean(u.banned),
+            orders: statsById.get(String(u._id))?.orders || 0,
+            spent: Math.round((statsById.get(String(u._id))?.spent || 0) * 100) / 100,
+        })),
+        pagination: pageMeta(total, page, limit),
+    });
 }
+
+export async function updateUser(req, res) {
+    const id = toObjectId(req.params.id, "user ID");
+    if (String(id) === req.user.id) {
+        throw new HttpError(400, "You cannot change your own role or block yourself.");
+    }
+
+    const { role, banned, banReason } = req.valid.body;
+    const set = { updatedAt: new Date() };
+    if (role) set.role = role;
+    if (banned !== undefined) {
+        set.banned = banned;
+        set.banReason = banned ? banReason || "Blocked by an administrator" : null;
+    }
+
+    const updated = await col(req, "user").findOneAndUpdate({ _id: id }, { $set: set }, { returnDocument: "after" });
+    if (!updated) throw new HttpError(404, "User not found");
+
+    // a blocked user is signed out everywhere immediately
+    if (banned) {
+        await col(req, "session").deleteMany({ userId: { $in: [id, String(id)] } });
+    }
+
+    res.json({
+        success: true,
+        message: "User updated",
+        data: { _id: String(updated._id), name: updated.name, email: updated.email, role: updated.role || "user", banned: Boolean(updated.banned) },
+    });
+}
+

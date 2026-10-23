@@ -1,11 +1,6 @@
-
-import "dotenv/config";
-
 import app, { initializeRoutes } from "./app.js";
+import { env } from "./config/env.js";
 import { connectDB, closeDB } from "./config/database.js";
-import { mongoClient } from "./config/auth.js";
-
-const PORT = Number(process.env.PORT) || 5000;
 
 let server;
 let isShuttingDown = false;
@@ -13,24 +8,18 @@ let isShuttingDown = false;
 async function startServer() {
     try {
         const db = await connectDB();
-
         initializeRoutes(db);
 
-        server = app.listen(PORT, () => {
-            console.log(`Server: http://localhost:${PORT}`);
-            console.log(`Health: http://localhost:${PORT}/api/health`);
-            console.log(`Products: http://localhost:${PORT}/api/products`);
-            console.log(`Orders: http://localhost:${PORT}/api/orders`);
-            console.log(`Admin users: http://localhost:${PORT}/api/admin/users`);
+        server = app.listen(env.port, () => {
+            console.log(`ShopSphere API  http://localhost:${env.port}`);
+            console.log(`Health          http://localhost:${env.port}/api/health`);
+            console.log(`Stripe webhook  http://localhost:${env.port}/api/payments/webhook`);
+            if (!env.stripeSecretKey) console.warn("STRIPE_SECRET_KEY is not set: payment endpoints will return 503.");
+            if (env.stripeSecretKey && !env.stripeWebhookSecret) console.warn("STRIPE_WEBHOOK_SECRET is not set: webhooks will be rejected.");
         });
     } catch (error) {
         console.error("Server startup error:", error);
-
-        await Promise.allSettled([
-            closeDB(),
-            mongoClient.close(),
-        ]);
-
+        await closeDB().catch(() => {});
         process.exitCode = 1;
     }
 }
@@ -38,25 +27,14 @@ async function startServer() {
 async function shutdown() {
     if (isShuttingDown) return;
     isShuttingDown = true;
-
     console.log("Shutting down ShopSphere server...");
 
     try {
-        if (server) {
-            await new Promise((resolve, reject) => {
-                server.close((error) => {
-                    if (error) reject(error);
-                    else resolve();
-                });
-            });
-        }
+        if (server) await new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
     } catch (error) {
         console.error("HTTP server shutdown error:", error);
     } finally {
-        await Promise.allSettled([
-            closeDB(),
-            mongoClient.close(),
-        ]);
+        await closeDB().catch(() => {});
     }
 }
 
